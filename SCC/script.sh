@@ -53,5 +53,5 @@ module load cuda/10.1
 module load python3/3.6.9
 module load pytorch/1.3
 
-python3 main.py --log-dir "./logdir/dreamer/$taskinput" --game $taskinput
+python3 main.py --log-dir "./logdir/dreamer/$taskinput" --cuda-idx 0 --game $taskinput
 
