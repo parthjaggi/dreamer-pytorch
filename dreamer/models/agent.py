@@ -21,14 +21,17 @@ class AgentModel(nn.Module):
             image_shape=(3, 64, 64),
             action_hidden_size=200,
             action_layers=3,
-            action_dist='relaxed_one_hot',
+            action_dist='one_hot',
             reward_shape=(1,),
             reward_layers=3,
-            reward_hidden=200,
+            reward_hidden=300,
             value_shape=(1,),
             value_layers=3,
             value_hidden=200,
             dtype=torch.float,
+            use_pcont=False,
+            pcont_layers=3,
+            pcont_hidden=200,
             **kwargs,
     ):
         super().__init__()
@@ -51,6 +54,8 @@ class AgentModel(nn.Module):
         self.dtype = dtype
         self.stochastic_size = stochastic_size
         self.deterministic_size = deterministic_size
+        if use_pcont:
+            self.pcont = DenseModel(feature_size, (1,), pcont_layers, pcont_hidden, dist='binary')
 
     def forward(self, observation: torch.Tensor, prev_action: torch.Tensor = None, prev_state: RSSMState = None):
         state = self.get_state_representation(observation, prev_action, prev_state)
@@ -64,15 +69,17 @@ class AgentModel(nn.Module):
         action_dist = self.action_decoder(feat)
         if self.action_dist == 'tanh_normal':
             if self.training:  # use agent.train(bool) or agent.eval()
-                action = action_dist.sample()
+                action = action_dist.rsample()
             else:
                 action = action_dist.mode()
+        elif self.action_dist == 'one_hot':
+            action = action_dist.sample()
+            # This doesn't change the value, but gives us straight-through gradients
+            action = action + action_dist.probs - action_dist.probs.detach()
         elif self.action_dist == 'relaxed_one_hot':
             action = action_dist.rsample()
         else:
-            # cannot propagate gradients with one hot distribution
             action = action_dist.sample()
-        action = action.reshape(*action.shape[:-1], *self.action_shape)
         return action, action_dist
 
     def get_state_representation(self, observation: torch.Tensor, prev_action: torch.Tensor = None,
