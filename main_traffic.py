@@ -9,30 +9,27 @@ from rlpyt.utils.logging.context import logger_context
 
 from dreamer.agents.atari_dreamer_agent import AtariDreamerAgent
 from dreamer.algos.dreamer_algo import Dreamer
-from dreamer.envs.atari import AtariEnv, AtariTrajInfo
+from dreamer.envs.traffic import TrafficEnv, AtariTrajInfo
 from dreamer.envs.wrapper import make_wapper
 from dreamer.envs.one_hot import OneHotAction
 from dreamer.envs.time_limit import TimeLimit
+from dreamer.envs.action_repeat import ActionRepeat
 
 
-def build_and_train(log_dir, game="pong", run_ID=0, cuda_idx=None, eval=False, save_model='last', load_model_path=None):
+def build_and_train(log_dir, game="traffic", run_ID=0, cuda_idx=None, eval=False, save_model='last', load_model_path=None, action_repeat=1, **kwargs):
     params = torch.load(load_model_path) if load_model_path else {}
     agent_state_dict = params.get('agent_state_dict')
     optimizer_state_dict = params.get('optimizer_state_dict')
 
-    action_repeat = 2
     env_kwargs = dict(
         name=game,
-        action_repeat=action_repeat,
-        size=(64, 64),
-        grayscale=False,
-        life_done=True,
-        sticky_actions=True,
+        render=False,
+        **kwargs
     )
     factory_method = make_wapper(
-        AtariEnv,
-        [OneHotAction, TimeLimit],
-        [dict(), dict(duration=1000 / action_repeat)])
+        TrafficEnv,
+        [ActionRepeat, OneHotAction, TimeLimit],
+        [dict(amount=action_repeat), dict(), dict(duration=1000 / action_repeat)])
     sampler = SerialSampler(
         EnvCls=factory_method,
         TrajInfoCls=AtariTrajInfo,  # default traj info + GameScore
@@ -67,13 +64,16 @@ def build_and_train(log_dir, game="pong", run_ID=0, cuda_idx=None, eval=False, s
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('--game', help='Atari game', default='pong')
+    parser.add_argument('--game', help='traffic env.', default='traffic')
     parser.add_argument('--run-ID', help='run identifier (logging)', type=int, default=0)
     parser.add_argument('--cuda-idx', help='gpu to use ', type=int, default=None)
     parser.add_argument('--eval', action='store_true')
     parser.add_argument('--save-model', help='save model', type=str, default='last',
                         choices=['all', 'none', 'gap', 'last'])
     parser.add_argument('--load-model-path', help='load model from path', type=str)  # path to params.pkl
+    parser.add_argument('--action-repeat', help='action repeat count', type=int, default=1)
+    parser.add_argument('--env-config-path', help='environment config path', type=str, default=None)
+    
 
     default_log_dir = os.path.join(
         os.path.dirname(__file__),
@@ -96,5 +96,7 @@ if __name__ == "__main__":
         cuda_idx=args.cuda_idx,
         eval=args.eval,
         save_model=args.save_model,
-        load_model_path=args.load_model_path
+        load_model_path=args.load_model_path,
+        action_repeat=args.action_repeat,
+        env_config_path=args.env_config_path
     )

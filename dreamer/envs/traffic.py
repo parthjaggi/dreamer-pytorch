@@ -1,74 +1,71 @@
 import gym
 import numpy as np
-from dm_control import suite
 from rlpyt.envs.base import Env, EnvStep
 from rlpyt.utils.collections import namedarraytuple
 from rlpyt.spaces.int_box import IntBox
 from rlpyt.spaces.float_box import FloatBox
-
+import yaml
+from rlpyt.envs.atari.atari_env import AtariTrajInfo
 from dreamer.envs.env import EnvInfo
 
-from wolf.world.environments.traffic.agents.connectors.action.exchange_change_phase import EXTEND
-from wolf.world.environments.traffic.traffic_env import TrafficEnv
-from wolf.world.environments.traffic.grid_env import SimpleGridEnv
 from wolf.utils.configuration.registry import R
+AtariTrajInfo = AtariTrajInfo
 
 
-# DMCInfo = namedarraytuple("DMCInfo", ["discount", 'traj_done'])
+class TrafficEnv(Env):
+    def __init__(self, name, render, **kwargs):
+        env_config_path = kwargs.get('env_config_path', None)
+        env_name, env_config = self.load_config(env_config_path)
+        self._size = tuple(env_config['agents_params']['params']['obs_params']['params']['size'])
+        self._env = self.get_env(env_name, env_config)
+        self._node_id = next(iter(self._env._agents.keys()))
+        self.random = np.random.RandomState(seed=None)  # expose for one_hot wrapper
 
+    def load_config(self, config_path):
+        with open(config_path) as file:
+            config = yaml.load(file)
 
-class DeepMindControl(Env):
+        experiments = config['ray']['run_experiments']['experiments']
+        experiment = next(iter(experiments.values()))
+        env_name = experiment['config']['env']
+        env_config = experiment['config']['env_config']
 
-    def __init__(self, name, size=(64, 64), camera=None):
-        domain, task = name.split('_', 1)
-        if domain == 'cup':  # Only domain with multiple words.
-            domain = 'ball_in_cup'
-        if isinstance(domain, str):
-            self._env = suite.load(domain, task)
-        else:
-            assert task is None
-            self._env = domain()
-        self._size = size
-        if camera is None:
-            camera = dict(quadruped=2).get(domain, 0)
-        self._camera = camera
+        return env_name, env_config
 
-    def get_env(self, kwargs):
-        create_env = R.env_factory(kwargs['test_env'])
-        env_config = self.load_env_config_yaml()
+    def get_env(self, env_name, env_config):
+        create_env = R.env_factory(env_name)
         env = create_env(env_config)
         return env
 
     @property
     def observation_space(self):
-        return IntBox(low=0, high=255, shape=(3,) + self._size,
-                      dtype="uint8")
+        return IntBox(low=0, high=255, shape=(3,) + self._size, dtype="uint8")
 
     @property
     def action_space(self):
-        spec = self._env.action_spec()
-        return FloatBox(low=spec.minimum, high=spec.maximum)
+        # self._env.action_space() needs extra config for grouping agent action_spaces.
+        return next(iter(self._env._agents.values())).action_space()
 
     def step(self, action):
-        time_step = self._env.step(action)
-        _ = dict(time_step.observation)
-        obs = self.render()
-        reward = time_step.reward or 0
-        done = time_step.last()
+        action = {self._node_id: action}
+        obs, reward, done, info = self._env.step(action)
+        self.obs = self.transform_obs(obs)
+        done = done[self._node_id]
+        reward = reward[self._node_id]
+        info = info[self._node_id]
 
-        info = EnvInfo(np.array(time_step.discount, np.float32), None, done)
-        return EnvStep(obs, reward, done, info)
+        info = EnvInfo(None, 0, done)
+        return EnvStep(self.obs, reward, done, info)
 
-    def reset(self):
-        time_step = self._env.reset()
-        _ = dict(time_step.observation)
-        obs = self.render()
+    def transform_obs(self, obs):
+        obs = obs[self._node_id]
+        obs = np.transpose(obs, (2, 0, 1))
         return obs
 
-    def render(self, *args, **kwargs):
-        if kwargs.get('mode', 'rgb_array') != 'rgb_array':
-            raise ValueError("Only render mode 'rgb_array' is supported.")
-        return self._env.physics.render(*self._size, camera_id=self._camera).transpose(2, 0, 1).copy()
+    def reset(self):
+        obs = self._env.reset()
+        self.obs = self.transform_obs(obs)
+        return self.obs
 
     @property
     def horizon(self):
