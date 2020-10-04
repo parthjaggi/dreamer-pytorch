@@ -23,7 +23,7 @@ class TrafficEnv(Env):
 
     def load_config(self, config_path):
         with open(config_path) as file:
-            config = yaml.load(file)
+            config = yaml.safe_load(file)
 
         experiments = config['ray']['run_experiments']['experiments']
         experiment = next(iter(experiments.values()))
